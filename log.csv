@@ -1,1 +1,0 @@
-variant,epochs,batch_size,lr,lambda_phys,mse_fault_free,mse_faulty,checkpoint
