@@ -1,0 +1,30 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Datos (pesados; se descargan de Harvard Dataverse, ver README)
+data/*.RData
+data/*.rdata
+data/*.csv
+data_muestra/
+
+# Checkpoints de modelos
+checkpoints/
+*.pt
+*.pth
+
+# Notebooks / editores / sistema
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# NO se ignora results/log.csv: es el registro de experimentos del equipo

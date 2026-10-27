@@ -8,6 +8,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -24,6 +25,8 @@ def parse_args():
     p.add_argument("--variant", type=str, default="baseline",
                     choices=["baseline", "pinn_soft", "pinn_alt"])
     p.add_argument("--batch_size", type=int, default=256)
+    p.add_argument("--faulty_runs", type=int, default=100,
+                    help="Simulaciones por fallo en el test faulty (0 = todas, ~9,6M filas)")
     return p.parse_args()
 
 
@@ -31,12 +34,15 @@ def mse_by_fault(model, dataset, device, batch_size) -> dict[int, float]:
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     model.eval()
     results = {}
+    offset = 0  # posición dentro de dataset.fault correspondiente al lote actual
     with torch.no_grad():
         for X, y in loader:
             X, y = X.to(device), y.to(device)
             pred = model(X)
             se = ((pred - y) ** 2).mean(dim=1).cpu().numpy()
-            for fault_id, err in zip(dataset.fault[: len(se)], se):
+            batch_faults = dataset.fault[offset: offset + len(se)]
+            offset += len(se)
+            for fault_id, err in zip(batch_faults, se):
                 results.setdefault(int(fault_id), []).append(err)
     return {k: float(np.mean(v)) for k, v in sorted(results.items())}
 
@@ -45,11 +51,14 @@ def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    train_ds, test_splits, *_ = load_tep(args.data_dir)
+    train_ds, val_ds, test_splits, *_ = load_tep(
+        args.data_dir, faulty_runs_per_fault=args.faulty_runs or None
+    )
     input_dim = train_ds.X.shape[1]
     output_dim = train_ds.y.shape[1]
 
-    model = build_model(input_dim, output_dim, variant=args.variant).to(device)
+    residual = "_res" in Path(args.checkpoint).stem  # deducido del nombre del checkpoint
+    model = build_model(input_dim, output_dim, variant=args.variant, residual=residual).to(device)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
 
     print("MSE por tipo de fallo (0 = fault-free):")

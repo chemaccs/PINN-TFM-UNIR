@@ -2,5 +2,7 @@ torch>=2.2
 numpy>=1.26
 pandas>=2.2
 scikit-learn>=1.4
+scipy>=1.11
 matplotlib>=3.8
 tqdm>=4.66
+pyreadr>=0.5  # solo para convert_rdata.py (.RData -> CSV)
