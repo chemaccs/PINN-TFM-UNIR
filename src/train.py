@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from src.data import load_tep
 from src.models import build_model
-from src.physics import physics_loss
+from src.physics import TERMINOS, physics_loss
 
 
 def set_seed(seed: int) -> None:
@@ -58,7 +58,14 @@ def parse_args():
     p.add_argument("--patience", type=int, default=15,
                     help="Épocas sin mejora en val antes de parar. 0 = sin early stopping")
     p.add_argument("--val_fraction", type=float, default=0.2)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, default=42,
+                    help="Semilla de la inicialización y del barajado de lotes")
+    p.add_argument("--split_seed", type=int, default=42,
+                    help="Semilla de la partición entrenamiento/validación (fija para todos)")
+    p.add_argument("--train_sims", type=int, default=0,
+                    help="Nº de simulaciones fault-free para entrenar (0 = todas, ~400)")
+    p.add_argument("--terms", type=str, default="mezcla,purga,producto",
+                    help="Restricciones físicas activas (separadas por comas): mezcla, purga, producto")
     p.add_argument("--residual", action="store_true",
                     help="El modelo aprende la corrección sobre la persistencia (ver models.py)")
     p.add_argument("--faulty_runs", type=int, default=100,
@@ -78,6 +85,23 @@ def evaluate_mse(model, loader, device) -> float:
             total_se += torch.sum((pred - y) ** 2).item()
             total_n += y.numel()
     return total_se / total_n
+
+
+def metricas_faulty(model, ds, device, onset: int = 160):
+    """MSE medio tras el inicio del fallo y mediana (por simulación) de ese MSE.
+    La media global está dominada por unos pocos fallos graves; la mediana por
+    simulación es más estable."""
+    import pandas as pd
+    model.eval()
+    mse = []
+    with torch.no_grad():
+        for X, y in DataLoader(ds, batch_size=8192, shuffle=False):
+            mse.append(((model(X.to(device)) - y.to(device)) ** 2).mean(dim=1).cpu())
+    mse = torch.cat(mse).numpy()
+    df = pd.DataFrame({"f": ds.fault, "r": ds.run, "s": ds.sample, "mse": mse})
+    df = df[df.s > onset]
+    por_sim = df.groupby(["f", "r"])["mse"].mean()
+    return float(df.mse.mean()), float(por_sim.median())
 
 
 def evaluate_phys(model, loader, y_scaler, device) -> float:
@@ -101,8 +125,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_ds, val_ds, test_splits, x_scaler, y_scaler, n_xmv = load_tep(
-        args.data_dir, val_fraction=args.val_fraction, seed=args.seed,
+        args.data_dir, val_fraction=args.val_fraction, seed=args.split_seed,
         faulty_runs_per_fault=args.faulty_runs or None,
+        train_sims=args.train_sims or None,
     )
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
@@ -125,8 +150,15 @@ def main():
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     # Un checkpoint por configuración, para no sobrescribir entre ejecuciones.
     stem = "baseline" if args.variant == "baseline" else f"{args.variant}_lam{args.lambda_phys:g}"
+    terms = tuple(t.strip() for t in args.terms.split(",") if t.strip())
+    if set(terms) - set(TERMINOS):
+        raise SystemExit(f"--terms desconocido: {terms}. Opciones: {TERMINOS}")
+    if args.variant != "baseline" and terms != TERMINOS:
+        stem += "_" + "-".join(terms)
     if args.residual:
         stem += "_res"
+    if args.train_sims:
+        stem += f"_n{args.train_sims}"
     if args.seed != 42:
         stem += f"_s{args.seed}"
     ckpt_path = ckpt_dir / f"{stem}.pt"
@@ -149,7 +181,7 @@ def main():
                 # el residuo físico tenga sentido, se des-escala antes de pasarlo
                 # a physics_loss, preservando el grafo de autodiferenciación.
                 pred_phys = unscale_torch(pred, y_scaler, device)
-                loss = loss + args.lambda_phys * physics_loss(pred_phys)
+                loss = loss + args.lambda_phys * physics_loss(pred_phys, terms)
             loss.backward()
             optimizer.step()
             pbar.set_postfix(loss=loss.item())
@@ -183,21 +215,36 @@ def main():
     mse_f = evaluate_mse(model, test_loaders["faulty"], device)
     print(f"MSE test (fault-free): {mse_ff:.5f}")
     print(f"MSE test (faulty):     {mse_f:.5f}")
+    mse_fd, mse_fd_med = metricas_faulty(model, test_splits["faulty"], device)
+    print(f"MSE faulty tras el fallo: media {mse_fd:.5f} | mediana por simulación {mse_fd_med:.5f}")
     print(f"Modelo guardado en {ckpt_path} (mejor val_mse={best_val_mse:.6f}, epoch {best_epoch})")
 
     log_path = Path(args.log_csv)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    cabecera = [
+        "variant", "epochs_run", "best_epoch", "batch_size", "lr", "lambda_phys",
+        "seed", "mse_val_best", "phys_val_best", "mse_fault_free", "mse_faulty", "checkpoint",
+        "train_sims", "residual", "terms", "split_seed",
+        "mse_faulty_despues", "mse_faulty_despues_mediana",
+    ]
+    if log_path.exists():
+        with open(log_path, newline="") as f:
+            primera = next(csv.reader(f), [])
+        if primera != cabecera:   # formato antiguo: se conserva aparte
+            antiguo = log_path.with_name(log_path.stem + "_antiguo.csv")
+            log_path.replace(antiguo)
+            print(f"Formato de log antiguo guardado en {antiguo}")
     new_file = not log_path.exists()
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
         if new_file:
-            writer.writerow([
-                "variant", "epochs_run", "best_epoch", "batch_size", "lr", "lambda_phys",
-                "seed", "mse_val_best", "phys_val_best", "mse_fault_free", "mse_faulty", "checkpoint",
-            ])
+            writer.writerow(cabecera)
         writer.writerow([
             args.variant, epoch, best_epoch, args.batch_size, args.lr, args.lambda_phys,
             args.seed, best_val_mse, best_val_phys, mse_ff, mse_f, str(ckpt_path),
+            args.train_sims or "all", int(args.residual),
+            "-".join(terms) if args.variant != "baseline" and args.lambda_phys > 0 else "",
+            args.split_seed, mse_fd, mse_fd_med,
         ])
     print(f"Resultado registrado en {log_path}")
 

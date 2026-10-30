@@ -111,6 +111,7 @@ def load_tep(
     val_fraction: float = 0.2,
     seed: int = 42,
     faulty_runs_per_fault: int | None = 100,
+    train_sims: int | None = None,
 ):
     """Carga los ficheros del TEP, construye secuencias one-step-ahead y escala.
 
@@ -139,7 +140,11 @@ def load_tep(
     rng.shuffle(run_ids)
     n_val = max(1, int(round(len(run_ids) * val_fraction)))
     val_runs = set(run_ids[:n_val])
-    train_runs = set(run_ids[n_val:])
+    pool = run_ids[n_val:]
+    # train_sims: usa solo las n primeras simulaciones del orden fijado por `seed`
+    # (subconjuntos ANIDADOS: las de n=10 incluyen las de n=5). Validación y test
+    # no cambian, así que los resultados son comparables entre tamaños.
+    train_runs = set(pool if not train_sims else pool[:train_sims])
 
     df_train = df_train_full[df_train_full[run_col].isin(train_runs)]
     df_val = df_train_full[df_train_full[run_col].isin(val_runs)]
