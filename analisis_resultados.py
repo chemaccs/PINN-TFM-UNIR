@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader
 
 from src.data import XMEAS_COLS, load_tep
 from src.models import build_model
-from src.physics import SIGMA, reactor_feed_residual
+from src.physics import physics_terms
 from src.train import unscale_torch
 
 FAULT_ONSET = 160
@@ -60,9 +60,12 @@ def pred_persistencia(ds, x_scaler, y_scaler, n_xmv: int) -> torch.Tensor:
     return (x_raw[:, n_xmv:] - ys_m) / ys_s
 
 
-def phys_medio(x_scaled: torch.Tensor, y_scaler) -> float:
-    r = reactor_feed_residual(unscale_torch(x_scaled, y_scaler, "cpu")) / SIGMA
-    return float((r**2).mean())
+def phys_medio(x_scaled: torch.Tensor, y_scaler) -> dict:
+    """Pérdida física media por restricción (mezcla, purga, producto) y total."""
+    t = physics_terms(unscale_torch(x_scaled, y_scaler, "cpu"))
+    out = {f"phys_{k}": float((v**2).mean()) for k, v in t.items()}
+    out["phys"] = sum(out.values()) / len(out)
+    return out
 
 
 def holm(p: np.ndarray) -> np.ndarray:
@@ -149,8 +152,8 @@ def main() -> None:
                     "modelo": nombre, "conjunto": conjunto, "periodo": p,
                     "mse_medio": float(se[mask].mean()),
                     "mse_mediana_por_simulacion": float(sims.median()),
-                    "phys_pred": phys_medio(pred[mask], y_sc),
-                    "phys_datos_reales": phys_real[p],
+                    **{f"{k}_pred": v for k, v in phys_medio(pred[mask], y_sc).items()},
+                    **{f"{k}_real": v for k, v in phys_real[p].items()},
                 })
             print(f"[OK] {conjunto} / {nombre}", flush=True)
 

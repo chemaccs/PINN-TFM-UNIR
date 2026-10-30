@@ -61,8 +61,33 @@ def reactor_feed_residual(xmeas_pred: torch.Tensor) -> torch.Tensor:
     return xmeas_pred[:, IDX_REACTOR_FEED] - inflow - BIAS
 
 
-def physics_loss(xmeas_pred: torch.Tensor) -> torch.Tensor:
-    """Pérdida física = media del residuo normalizado al cuadrado.
-    xmeas_pred debe estar ya des-escalado."""
-    r = reactor_feed_residual(xmeas_pred) / SIGMA
-    return torch.mean(r**2)
+# Cierres de composición (analizadores, % molar). Estimados con diagnostico.py
+# sobre fault-free: la purga suma 100 y no cambia con ningún fallo; el producto
+# suma 98,5 (desfase estable). La alimentación al reactor (XMEAS 23-28) NO se usa:
+# suma 94,8 y se desplaza 2,6 sigma con el IDV 6.
+IDX_PURGA = slice(28, 36)      # xmeas_29..36 (A-H)
+IDX_PRODUCTO = slice(36, 41)   # xmeas_37..41 (D-H)
+BIAS_PURGA, SIGMA_PURGA = 0.0, 0.461
+BIAS_PRODUCTO, SIGMA_PRODUCTO = -1.475, 0.695
+
+
+def physics_terms(xmeas_pred: torch.Tensor) -> dict:
+    """Residuos normalizados (adimensionales) de cada restricción, por muestra."""
+    return {
+        "mezcla": reactor_feed_residual(xmeas_pred) / SIGMA,
+        "purga": (xmeas_pred[:, IDX_PURGA].sum(dim=1) - 100.0 - BIAS_PURGA) / SIGMA_PURGA,
+        "producto": (xmeas_pred[:, IDX_PRODUCTO].sum(dim=1) - 100.0 - BIAS_PRODUCTO) / SIGMA_PRODUCTO,
+    }
+
+
+TERMINOS = ("mezcla", "purga", "producto")
+
+
+def physics_loss(xmeas_pred: torch.Tensor, terms=None) -> torch.Tensor:
+    """Pérdida física = media de las pérdidas de las restricciones elegidas
+    (residuo normalizado al cuadrado). Sobre datos reales vale ~1.
+    terms: subconjunto de TERMINOS (por defecto, las tres). xmeas_pred ya
+    des-escalado."""
+    t = physics_terms(xmeas_pred)
+    usar = TERMINOS if terms is None else tuple(terms)
+    return sum(torch.mean(t[k] ** 2) for k in usar) / len(usar)
