@@ -1,0 +1,5 @@
+fichero,filas,fallos,sim_por_fallo_min,sim_por_fallo_max,muestras_por_sim,MB_en_disco,segundos
+TEP_FaultFree_Training.csv,50000,1,100,100,500,18.8,2.1
+TEP_FaultFree_Testing.csv,96000,1,100,100,960,36.1,4.5
+TEP_Faulty_Training.csv,1000000,20,100,100,500,375.9,43.1
+TEP_Faulty_Testing.csv,1920000,20,100,100,960,721.9,81.4
