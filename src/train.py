@@ -68,6 +68,8 @@ def parse_args():
                     help="Restricciones físicas activas (separadas por comas): mezcla, purga, producto")
     p.add_argument("--residual", action="store_true",
                     help="El modelo aprende la corrección sobre la persistencia (ver models.py)")
+    p.add_argument("--no_bar", action="store_true",
+                    help="Sin barra de progreso (evita errores de consola en ejecuciones largas)")
     p.add_argument("--faulty_runs", type=int, default=100,
                     help="Simulaciones por fallo en el test faulty (0 = todas, ~9,6M filas)")
     p.add_argument("--checkpoint_dir", type=str, default="checkpoints")
@@ -170,7 +172,8 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        pbar = tqdm(train_loader, desc=f"[{args.variant}] epoch {epoch}/{args.epochs}")
+        pbar = tqdm(train_loader, desc=f"[{args.variant}] epoch {epoch}/{args.epochs}",
+                    disable=args.no_bar)
         for X, y in pbar:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()

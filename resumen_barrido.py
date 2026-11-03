@@ -29,7 +29,10 @@ def main() -> None:
     ficheros = sorted(f for f in glob.glob("results/barrido*.csv")
                       if "resumen" not in f and "diferencias" not in f)
     df = pd.concat([pd.read_csv(f) for f in ficheros], ignore_index=True)
-    df = df.drop_duplicates(subset=["variant", "lambda_phys", "residual", "train_sims", "seed"])
+    # Si una combinación está repetida (p. ej. se volvió a ejecutar con más épocas), se
+    # conserva la última, según el orden alfabético de los ficheros (..._v2 < ..._v3).
+    df = df.drop_duplicates(subset=["variant", "lambda_phys", "residual", "train_sims", "seed"],
+                            keep="last")
     df["n"] = df.train_sims.replace("all", np.nan).astype(float)
     n_max = int(df.n.max()) * 1 if df.n.notna().any() else 400
     df["n"] = df.n.fillna(400.0)  # "all" ~ todas las simulaciones de entrenamiento (~400)
