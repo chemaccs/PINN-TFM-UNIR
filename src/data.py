@@ -144,7 +144,11 @@ def load_tep(
     # train_sims: usa solo las n primeras simulaciones del orden fijado por `seed`
     # (subconjuntos ANIDADOS: las de n=10 incluyen las de n=5). Validación y test
     # no cambian, así que los resultados son comparables entre tamaños.
+    if train_sims and train_sims > len(pool):
+        print(f"AVISO: se piden {train_sims} simulaciones de entrenamiento pero solo hay "
+              f"{len(pool)} disponibles tras separar la validación; se usan {len(pool)}.")
     train_runs = set(pool if not train_sims else pool[:train_sims])
+    print(f"Simulaciones fault-free: {len(run_ids)} (entrenamiento {len(train_runs)}, validación {n_val})")
 
     df_train = df_train_full[df_train_full[run_col].isin(train_runs)]
     df_val = df_train_full[df_train_full[run_col].isin(val_runs)]

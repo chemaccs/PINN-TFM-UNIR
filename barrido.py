@@ -58,11 +58,14 @@ def main() -> None:
     ap.add_argument("--arms", nargs="+", default=["base", "base_res", "pinn", "pinn_res"],
                     choices=list(ARMS))
     ap.add_argument("--faulty_runs", type=int, default=100)
+    ap.add_argument("--epochs", type=int, default=300,
+                    help="Máximo de épocas (la parada anticipada corta antes casi siempre)")
     args = ap.parse_args()
 
     log = Path(args.log)
     total = len(args.sizes) * len(args.seeds) * len(args.arms)
     k = 0
+    fallidos = []
     for n in args.sizes:
         for seed in args.seeds:
             for arm in args.arms:
@@ -73,16 +76,26 @@ def main() -> None:
                     continue
                 a = ARMS[arm]
                 cmd = [sys.executable, "-m", "src.train", "--variant", a["variant"],
-                       "--epochs", "300" if 0 < n < 50 else "100",
+                       "--epochs", str(args.epochs),
                        "--seed", str(seed), "--train_sims", str(n),
                        "--data_dir", args.data_dir, "--faulty_runs", str(args.faulty_runs),
-                       "--log_csv", str(log)]
+                       "--log_csv", str(log), "--no_bar"]
                 if a["variant"] != "baseline":
                     cmd += ["--lambda_phys", str(a["lam"]), "--terms", TERMS]
                 if a["residual"]:
                     cmd += ["--residual"]
                 print(f"[{k}/{total}] {arm} n={n or 'all'} seed={seed}", flush=True)
-                subprocess.run(cmd, check=True)
+                for intento in (1, 2, 3):
+                    if subprocess.run(cmd).returncode == 0:
+                        break
+                    print(f"  fallo (intento {intento}/3), se reintenta", flush=True)
+                else:
+                    fallidos.append((arm, n, seed))
+                    print("  se omite esta combinación; vuelve a lanzar el comando para repetirla", flush=True)
+
+
+    if fallidos:
+        print("\nCombinaciones sin completar:", fallidos)
 
 
 if __name__ == "__main__":
